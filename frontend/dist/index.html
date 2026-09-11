@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TimeAtlas</title>
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+  <link rel="stylesheet" href="style.css?v=2" />
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">&#127760;</span>
+        <div>
+          <h1>TimeAtlas</h1>
+          <p class="subtitle">Time and weather around the world</p>
+        </div>
+      </div>
+      <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+          <path d="M19.4 13.5a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V19.5a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H4.5a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.03 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H10.6A1.7 1.7 0 0 0 11.63 3.1V3.5a2 2 0 1 1 4 0v.09c0 .66.4 1.26 1.03 1.51.63.26 1.35.12 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09c.25.63.85 1.03 1.51 1.03h.4a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.03Z" />
+        </svg>
+      </button>
+    </header>
+
+    <main>
+      <section id="cards-section" aria-label="Places">
+        <div id="cards-grid" class="cards-grid"></div>
+      </section>
+
+      <section id="map-section" aria-label="Map">
+        <div id="map"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="settings-overlay" class="overlay hidden">
+    <div class="settings-panel" role="dialog" aria-modal="true" aria-label="Settings">
+      <div class="settings-header">
+        <h2>Manage places</h2>
+        <button id="settings-close" class="icon-btn" aria-label="Close settings">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+
+      <p class="settings-hint">Keep between 2 and 10 places.</p>
+
+      <div id="current-places" class="place-list"></div>
+
+      <div class="settings-divider"></div>
+
+      <h3>Add a place</h3>
+      <form id="search-form" class="search-form">
+        <input id="search-input" type="text" placeholder="Start typing a city name&hellip;" autocomplete="off" />
+        <button type="submit">Search</button>
+      </form>
+      <div id="search-status" class="search-status"></div>
+      <div id="search-results" class="place-list"></div>
+      <p class="settings-footnote">Suggestions appear automatically as you type (2+ characters).</p>
+    </div>
+  </div>
+
+  <div id="detail-overlay" class="overlay hidden">
+    <div class="detail-panel" role="dialog" aria-modal="true" aria-label="Weather details">
+      <div class="settings-header">
+        <div>
+          <h2 id="detail-city">&nbsp;</h2>
+          <p class="settings-hint" id="detail-region">&nbsp;</p>
+        </div>
+        <button id="detail-close" class="icon-btn" aria-label="Close weather details">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="today">Today</button>
+        <button class="tab-btn" data-tab="week">This Week</button>
+      </div>
+
+      <div id="detail-content" class="detail-content">
+        <p class="search-status info">Loading&hellip;</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="app.js?v=3"></script>
+</body>
+</html>
