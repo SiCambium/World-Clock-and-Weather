@@ -6,6 +6,7 @@ mod map;
 mod model;
 mod store;
 mod style;
+mod secrets;
 mod tiles;
 mod tz;
 
@@ -112,6 +113,10 @@ struct Settings {
     searching: bool,
     results: Vec<GeocodeResult>,
     note: Option<Note>,
+    /// A new API key being typed for the current map style.
+    api_key: String,
+    /// Result of the last save, shown under the key field.
+    key_note: Option<Note>,
 }
 
 struct Detail {
@@ -172,6 +177,9 @@ enum Message {
     TileRetryTick,
     TileFetched(tiles::Fetched),
     MapProvider(tiles::Provider),
+    ApiKeyChanged(String),
+    SaveApiKey,
+    RemoveApiKey,
     ShowMap(bool),
     ShowWeather(bool),
     DefaultShowMap(bool),
@@ -216,7 +224,12 @@ impl App {
                 ..map::View::default()
             },
             map_sized: false,
-            tiles: tiles::Tiles::new(prefs.map_provider),
+            tiles: {
+                let mut t = tiles::Tiles::new(prefs.map_provider);
+                let key = prefs.map_provider.key_service().and_then(secrets::get);
+                let _ = t.set_provider(prefs.map_provider, key);
+                t
+            },
             settings: Settings::default(),
             overlay: Overlay::None,
             notice,
@@ -404,8 +417,47 @@ impl App {
                 store::save_prefs(&self.prefs);
                 self.map.max_zoom = provider.max_zoom();
                 self.map.clamp();
-                let _ = self.tiles.set_provider(provider);
-                self.load_tiles()
+                // Load the new style straight away, with its saved key.
+                let key = provider.key_service().and_then(secrets::get);
+                let start = self.tiles.set_provider(provider, key);
+                self.settings.api_key.clear();
+                self.settings.key_note = None;
+                Task::batch([fetch_tiles(start), self.load_tiles()])
+            }
+            Message::ApiKeyChanged(key) => {
+                self.settings.api_key = key;
+                self.settings.key_note = None;
+                Task::none()
+            }
+            Message::SaveApiKey => {
+                let Some(service) = self.tiles.provider().key_service() else {
+                    return Task::none();
+                };
+                let key = self.settings.api_key.trim().to_string();
+                if key.is_empty() {
+                    return Task::none();
+                }
+                match secrets::set(service, &key) {
+                    Ok(()) => {
+                        self.settings.api_key.clear();
+                        self.settings.key_note = Some(Note::Info("Key saved. Loading the map…".into()));
+                        let start = self.tiles.set_api_key(Some(key));
+                        Task::batch([fetch_tiles(start), self.load_tiles()])
+                    }
+                    Err(e) => {
+                        self.settings.key_note = Some(Note::Error(format!("Couldn't save the key: {e}")));
+                        Task::none()
+                    }
+                }
+            }
+            Message::RemoveApiKey => {
+                let Some(service) = self.tiles.provider().key_service() else {
+                    return Task::none();
+                };
+                secrets::remove(service);
+                self.settings.key_note = Some(Note::Info("Key removed.".into()));
+                let start = self.tiles.set_api_key(None);
+                fetch_tiles(start)
             }
 
             Message::OpenSettings => {
@@ -752,7 +804,7 @@ impl App {
         // Room left for a single clock once the card padding and the
         // weather panel beside it are taken off.
         let room = card_width - 32.0 - if self.show_weather { 118.0 + 24.0 + 12.0 } else { 0.0 } - 8.0;
-        let digits = if single { (room / 3.5).clamp(40.0, 72.0) } else { 40.0 };
+        let digits = if single { (room / 3.1).clamp(40.0, 80.0) } else { 40.0 };
         let secs = digits * 0.42;
         let face_size = room.clamp(96.0, 150.0);
 
@@ -970,7 +1022,31 @@ impl App {
         .style(style::map_control_group);
 
         let failed = self.tiles.failed_count();
-        let status: Element<'_, Message> = if failed > 0 {
+        let key_problem = match self.tiles.provider().key_service() {
+            Some(service) if self.tiles.needs_key() => {
+                Some(format!("{} needs an API key", service.name()))
+            }
+            Some(service) if self.tiles.key_rejected() => {
+                Some(format!("{} didn't accept the API key", service.name()))
+            }
+            _ => None,
+        };
+        let status: Element<'_, Message> = if let Some(problem) = key_problem {
+            container(
+                row![
+                    text(problem).size(12),
+                    button(text("Add key").size(12))
+                        .padding([3, 10])
+                        .style(style::primary_button)
+                        .on_press(Message::OpenSettings),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+            )
+            .padding([6, 10])
+            .style(style::map_control_group)
+            .into()
+        } else if failed > 0 {
             container(
                 row![
                     text("Some map tiles didn't load").size(12),
@@ -1140,6 +1216,65 @@ impl App {
             .text_size(13.5),
         ]
         .spacing(8);
+        let map_style = match self.tiles.provider().key_service() {
+            None => map_style,
+            Some(service) => {
+                let saved = !self.tiles.needs_key();
+                let status = if self.tiles.key_rejected() {
+                    text(format!("{} turned this key down. Check it and save it again.", service.name()))
+                        .size(12.5)
+                        .style(danger)
+                } else if saved {
+                    text("A key is saved in your Keychain.").size(12.5).style(muted)
+                } else {
+                    text(format!(
+                        "This style needs a free API key from {}. Get one at {}",
+                        service.name(),
+                        service.signup_url()
+                    ))
+                    .size(12.5)
+                    .style(muted)
+                };
+                let field = text_input(
+                    if saved { "Paste a new key to replace it" } else { "Paste your API key" },
+                    &self.settings.api_key,
+                )
+                .id("api-key")
+                .secure(true)
+                .on_input(Message::ApiKeyChanged)
+                .on_submit(Message::SaveApiKey)
+                .padding([9, 12])
+                .size(13.5)
+                .style(style::search_input);
+                let mut actions = row![
+                    field,
+                    button(text("Save").size(13))
+                        .padding([8, 14])
+                        .style(style::primary_button)
+                        .on_press_maybe((!self.settings.api_key.trim().is_empty()).then_some(Message::SaveApiKey)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center);
+                if saved {
+                    actions = actions.push(
+                        button(text("Remove").size(13))
+                            .padding([8, 14])
+                            .style(style::secondary_button)
+                            .on_press(Message::RemoveApiKey),
+                    );
+                }
+                let note: Element<'_, Message> = match &self.settings.key_note {
+                    Some(Note::Info(m)) => text(m).size(12.5).style(accent).into(),
+                    Some(Note::Error(m)) => text(m).size(12.5).style(danger).into(),
+                    None => Space::new().into(),
+                };
+                map_style
+                    .push(text(format!("{} API key", service.name())).size(13).font(INTER_MEDIUM))
+                    .push(actions)
+                    .push(status)
+                    .push(note)
+            }
+        };
 
         let content = column![
             self.panel_header("Settings".into(), String::new()),
@@ -1218,9 +1353,9 @@ impl App {
     }
 }
 
-fn fetch_tiles(start: Vec<(tiles::Provider, tiles::TileKey, u64)>) -> Task<Message> {
-    Task::batch(start.into_iter().map(|(provider, key, generation)| {
-        Task::perform(tiles::fetch(provider, key, generation), Message::TileFetched)
+fn fetch_tiles(start: Vec<tiles::Job>) -> Task<Message> {
+    Task::batch(start.into_iter().map(|(provider, key, generation, api_key)| {
+        Task::perform(tiles::fetch(provider, key, generation, api_key), Message::TileFetched)
     }))
 }
 

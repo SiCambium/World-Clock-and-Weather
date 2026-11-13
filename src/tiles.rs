@@ -12,8 +12,52 @@ use std::time::{Duration, Instant, SystemTime};
 use iced::widget::image;
 use serde::{Deserialize, Serialize};
 
-/// Map styles the user can pick from. All are free to use without an
-/// account or API key, within each provider's fair-use terms.
+/// A tile service that needs the user's own (free) API key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyService {
+    Thunderforest,
+    Stadia,
+    MapTiler,
+}
+
+impl KeyService {
+    pub fn name(self) -> &'static str {
+        match self {
+            KeyService::Thunderforest => "Thunderforest",
+            KeyService::Stadia => "Stadia Maps",
+            KeyService::MapTiler => "MapTiler",
+        }
+    }
+
+    /// Stable name used for the Keychain item.
+    pub fn id(self) -> &'static str {
+        match self {
+            KeyService::Thunderforest => "thunderforest",
+            KeyService::Stadia => "stadia",
+            KeyService::MapTiler => "maptiler",
+        }
+    }
+
+    pub fn signup_url(self) -> &'static str {
+        match self {
+            KeyService::Thunderforest => "https://manage.thunderforest.com/",
+            KeyService::Stadia => "https://client.stadiamaps.com/",
+            KeyService::MapTiler => "https://cloud.maptiler.com/account/keys/",
+        }
+    }
+
+    fn query_param(self) -> &'static str {
+        match self {
+            KeyService::Thunderforest => "apikey",
+            KeyService::Stadia => "api_key",
+            KeyService::MapTiler => "key",
+        }
+    }
+}
+
+/// Map styles the user can pick from. The first few are free to use without
+/// an account, within each provider's fair-use terms; the rest need a free
+/// API key from their provider, entered in Settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum Provider {
     #[default]
@@ -22,16 +66,42 @@ pub enum Provider {
     CartoDark,
     CartoVoyager,
     OpenTopoMap,
+    ThunderforestOutdoors,
+    ThunderforestTransport,
+    StadiaSmooth,
+    StadiaSmoothDark,
+    StamenTerrain,
+    MapTilerStreets,
 }
 
 impl Provider {
-    pub const ALL: [Provider; 5] = [
+    pub const ALL: [Provider; 11] = [
         Provider::OpenStreetMap,
         Provider::CartoVoyager,
         Provider::CartoLight,
         Provider::CartoDark,
         Provider::OpenTopoMap,
+        Provider::ThunderforestOutdoors,
+        Provider::ThunderforestTransport,
+        Provider::StadiaSmooth,
+        Provider::StadiaSmoothDark,
+        Provider::StamenTerrain,
+        Provider::MapTilerStreets,
     ];
+
+    /// The service whose API key this style needs, if any.
+    pub fn key_service(self) -> Option<KeyService> {
+        match self {
+            Provider::ThunderforestOutdoors | Provider::ThunderforestTransport => {
+                Some(KeyService::Thunderforest)
+            }
+            Provider::StadiaSmooth | Provider::StadiaSmoothDark | Provider::StamenTerrain => {
+                Some(KeyService::Stadia)
+            }
+            Provider::MapTilerStreets => Some(KeyService::MapTiler),
+            _ => None,
+        }
+    }
 
     /// Folder name for the disk cache.
     fn cache_name(self) -> &'static str {
@@ -41,6 +111,12 @@ impl Provider {
             Provider::CartoDark => "carto-dark",
             Provider::CartoVoyager => "carto-voyager",
             Provider::OpenTopoMap => "opentopomap",
+            Provider::ThunderforestOutdoors => "thunderforest-outdoors",
+            Provider::ThunderforestTransport => "thunderforest-transport",
+            Provider::StadiaSmooth => "stadia-smooth",
+            Provider::StadiaSmoothDark => "stadia-smooth-dark",
+            Provider::StamenTerrain => "stamen-terrain",
+            Provider::MapTilerStreets => "maptiler-streets",
         }
     }
 
@@ -52,6 +128,12 @@ impl Provider {
             Provider::CartoDark => "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
             Provider::CartoVoyager => "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png",
             Provider::OpenTopoMap => "https://tile.opentopomap.org/{z}/{x}/{y}.png",
+            Provider::ThunderforestOutdoors => "https://tile.thunderforest.com/outdoors/{z}/{x}/{y}@2x.png",
+            Provider::ThunderforestTransport => "https://tile.thunderforest.com/transport/{z}/{x}/{y}@2x.png",
+            Provider::StadiaSmooth => "https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}@2x.png",
+            Provider::StadiaSmoothDark => "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}@2x.png",
+            Provider::StamenTerrain => "https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}@2x.png",
+            Provider::MapTilerStreets => "https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}@2x.png",
         }
     }
 
@@ -62,6 +144,16 @@ impl Provider {
                 "© OpenStreetMap contributors © CARTO"
             }
             Provider::OpenTopoMap => "© OpenStreetMap contributors, SRTM · © OpenTopoMap (CC-BY-SA)",
+            Provider::ThunderforestOutdoors | Provider::ThunderforestTransport => {
+                "Maps © Thunderforest · Data © OpenStreetMap contributors"
+            }
+            Provider::StadiaSmooth | Provider::StadiaSmoothDark => {
+                "© Stadia Maps © OpenMapTiles © OpenStreetMap contributors"
+            }
+            Provider::StamenTerrain => {
+                "© Stadia Maps © Stamen Design © OpenMapTiles © OpenStreetMap contributors"
+            }
+            Provider::MapTilerStreets => "© MapTiler © OpenStreetMap contributors",
         }
     }
 
@@ -69,13 +161,14 @@ impl Provider {
         match self {
             Provider::OpenStreetMap => 19,
             Provider::OpenTopoMap => 17,
+            Provider::StamenTerrain => 18,
             _ => 20,
         }
     }
 
     /// Whether the tiles are already dark, so dark mode needn't dim them.
     pub fn is_dark(self) -> bool {
-        self == Provider::CartoDark
+        matches!(self, Provider::CartoDark | Provider::StadiaSmoothDark)
     }
 }
 
@@ -87,6 +180,12 @@ impl std::fmt::Display for Provider {
             Provider::CartoLight => "CARTO Positron (light)",
             Provider::CartoDark => "CARTO Dark Matter (dark)",
             Provider::OpenTopoMap => "OpenTopoMap (terrain)",
+            Provider::ThunderforestOutdoors => "Thunderforest Outdoors (API key)",
+            Provider::ThunderforestTransport => "Thunderforest Transport (API key)",
+            Provider::StadiaSmooth => "Stadia Alidade Smooth (API key)",
+            Provider::StadiaSmoothDark => "Stadia Alidade Smooth Dark (API key)",
+            Provider::StamenTerrain => "Stamen Terrain via Stadia (API key)",
+            Provider::MapTilerStreets => "MapTiler Streets (API key)",
         })
     }
 }
@@ -95,6 +194,10 @@ const MAX_IN_FLIGHT: usize = 4;
 const MAX_ATTEMPTS: u8 = 4;
 const CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const MEMORY_LIMIT: usize = 600;
+
+/// One download to start: the style, the tile, the refresh generation and
+/// the API key to send, if the style needs one.
+pub type Job = (Provider, TileKey, u64, Option<String>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileKey {
@@ -127,7 +230,15 @@ pub struct Fetched {
     pub provider: Provider,
     pub key: TileKey,
     pub generation: u64,
-    pub result: Result<Vec<u8>, String>,
+    pub result: Result<Vec<u8>, FetchError>,
+}
+
+#[derive(Debug, Clone)]
+pub enum FetchError {
+    /// The provider refused the API key (HTTP 401 or 403).
+    KeyRejected,
+    #[allow(dead_code)] // the message is handy in a debugger
+    Other(String),
 }
 
 #[derive(Default)]
@@ -140,6 +251,10 @@ pub struct Tiles {
     generation: u64,
     /// Tiles currently on screen, for eviction and for status.
     wanted: HashSet<TileKey>,
+    /// The API key for the current style, when it needs one.
+    api_key: Option<String>,
+    /// The provider turned the key down; nothing is fetched until it changes.
+    key_rejected: bool,
 }
 
 impl Tiles {
@@ -154,11 +269,31 @@ impl Tiles {
         self.provider
     }
 
-    /// Switches map style, dropping every tile of the old one.
-    pub fn set_provider(&mut self, provider: Provider) -> Vec<(Provider, TileKey, u64)> {
+    /// Switches map style, dropping every tile of the old one, and starts
+    /// loading the new one straight away.
+    pub fn set_provider(&mut self, provider: Provider, api_key: Option<String>) -> Vec<Job> {
         self.provider = provider;
+        self.api_key = api_key.filter(|k| !k.trim().is_empty());
+        self.key_rejected = false;
         self.states.clear();
         self.refresh()
+    }
+
+    /// Uses a new API key for the current style and reloads the map.
+    pub fn set_api_key(&mut self, api_key: Option<String>) -> Vec<Job> {
+        self.api_key = api_key.filter(|k| !k.trim().is_empty());
+        self.key_rejected = false;
+        self.states.clear();
+        self.refresh()
+    }
+
+    /// The current style needs an API key and none has been entered.
+    pub fn needs_key(&self) -> bool {
+        self.provider.key_service().is_some() && self.api_key.is_none()
+    }
+
+    pub fn key_rejected(&self) -> bool {
+        self.key_rejected
     }
 
     pub fn handle(&self, key: TileKey) -> Option<&image::Handle> {
@@ -189,7 +324,7 @@ impl Tiles {
     }
 
     /// Declares which tiles are visible. Returns the downloads to start.
-    pub fn want(&mut self, keys: Vec<TileKey>) -> Vec<(Provider, TileKey, u64)> {
+    pub fn want(&mut self, keys: Vec<TileKey>) -> Vec<Job> {
         self.wanted = keys.iter().copied().collect();
 
         // Drop queued tiles that scrolled out of view.
@@ -209,7 +344,7 @@ impl Tiles {
     }
 
     /// Records a finished download. Returns further downloads to start.
-    pub fn finish(&mut self, fetched: Fetched) -> Vec<(Provider, TileKey, u64)> {
+    pub fn finish(&mut self, fetched: Fetched) -> Vec<Job> {
         if fetched.generation != self.generation || fetched.provider != self.provider {
             return self.pump();
         }
@@ -220,7 +355,14 @@ impl Tiles {
         };
         let state = match fetched.result {
             Ok(bytes) => TileState::Ready(image::Handle::from_bytes(bytes)),
-            Err(_) => {
+            Err(FetchError::KeyRejected) => {
+                self.key_rejected = true;
+                TileState::Failed {
+                    attempts: MAX_ATTEMPTS,
+                    retry_at: Instant::now() + Duration::from_secs(60 * 60 * 24),
+                }
+            }
+            Err(FetchError::Other(_)) => {
                 let attempts = attempts + 1;
                 // 2s, 4s, 8s... then wait for the user to press refresh.
                 let delay = if attempts >= MAX_ATTEMPTS {
@@ -240,7 +382,7 @@ impl Tiles {
 
     /// Called periodically: re-queues failed visible tiles whose backoff has
     /// passed.
-    pub fn retry_due(&mut self) -> Vec<(Provider, TileKey, u64)> {
+    pub fn retry_due(&mut self) -> Vec<Job> {
         let now = Instant::now();
         let due: Vec<TileKey> = self
             .wanted
@@ -256,7 +398,7 @@ impl Tiles {
 
     /// Forgets every tile that is not loaded and starts again; tiles already
     /// on screen stay until their replacements arrive.
-    pub fn refresh(&mut self) -> Vec<(Provider, TileKey, u64)> {
+    pub fn refresh(&mut self) -> Vec<Job> {
         self.generation += 1;
         self.in_flight = 0;
         self.queue.clear();
@@ -274,8 +416,11 @@ impl Tiles {
         self.pump()
     }
 
-    fn pump(&mut self) -> Vec<(Provider, TileKey, u64)> {
+    fn pump(&mut self) -> Vec<Job> {
         let mut start = Vec::new();
+        if self.needs_key() || self.key_rejected {
+            return start;
+        }
         while self.in_flight < MAX_IN_FLIGHT {
             let Some(key) = self.queue.pop_front() else { break };
             match self.states.get(&key) {
@@ -296,7 +441,7 @@ impl Tiles {
                 }
             }
             self.in_flight += 1;
-            start.push((self.provider, key, self.generation));
+            start.push((self.provider, key, self.generation, self.api_key.clone()));
         }
         start
     }
@@ -334,13 +479,14 @@ fn cache_path(provider: Provider, key: TileKey) -> Option<PathBuf> {
     )
 }
 
-fn is_png(bytes: &[u8]) -> bool {
-    bytes.starts_with(&[0x89, b'P', b'N', b'G'])
+/// PNG or JPEG, the two formats tile servers send.
+fn is_image(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0x89, b'P', b'N', b'G']) || bytes.starts_with(&[0xFF, 0xD8, 0xFF])
 }
 
 /// Loads one tile: fresh disk cache first, then the network, then a stale
 /// cached copy if the network fails.
-pub async fn fetch(provider: Provider, key: TileKey, generation: u64) -> Fetched {
+pub async fn fetch(provider: Provider, key: TileKey, generation: u64, api_key: Option<String>) -> Fetched {
     let path = cache_path(provider, key);
     let mut stale: Option<Vec<u8>> = None;
 
@@ -352,7 +498,7 @@ pub async fn fetch(provider: Provider, key: TileKey, generation: u64) -> Fetched
                 .and_then(|m| m.modified().ok())
                 .and_then(|t| SystemTime::now().duration_since(t).ok())
                 .is_some_and(|age| age < CACHE_TTL);
-            if is_png(&bytes) {
+            if is_image(&bytes) {
                 if fresh {
                     return Fetched {
                         provider,
@@ -373,17 +519,32 @@ pub async fn fetch(provider: Provider, key: TileKey, generation: u64) -> Fetched
         .replace("{y}", &key.y.to_string());
 
     let network = async {
-        let resp = crate::api::client()
-            .get(&url)
+        let mut request = crate::api::client().get(&url);
+        if let (Some(service), Some(api_key)) = (provider.key_service(), &api_key) {
+            request = request.query(&[(service.query_param(), api_key.trim())]);
+        }
+        // Errors are reported without the URL, so the key never ends up in
+        // a message.
+        let resp = request
             .send()
             .await
-            .map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            return Err(format!("HTTP {}", resp.status()));
+            .map_err(|e| FetchError::Other(e.without_url().to_string()))?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            if provider.key_service().is_some() {
+                return Err(FetchError::KeyRejected);
+            }
         }
-        let bytes = resp.bytes().await.map_err(|e| e.to_string())?.to_vec();
-        if !is_png(&bytes) {
-            return Err("not an image".to_string());
+        if !status.is_success() {
+            return Err(FetchError::Other(format!("HTTP {status}")));
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| FetchError::Other(e.without_url().to_string()))?
+            .to_vec();
+        if !is_image(&bytes) {
+            return Err(FetchError::Other("not an image".to_string()));
         }
         Ok(bytes)
     }
@@ -402,6 +563,9 @@ pub async fn fetch(provider: Provider, key: TileKey, generation: u64) -> Fetched
             }
             Ok(bytes)
         }
+        // A rejected key is reported even if an old copy is cached, so the
+        // user hears about it.
+        Err(FetchError::KeyRejected) => Err(FetchError::KeyRejected),
         Err(e) => stale.ok_or(e),
     };
 
@@ -410,5 +574,45 @@ pub async fn fetch(provider: Provider, key: TileKey, generation: u64) -> Fetched
         key,
         generation,
         result,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keys() -> Vec<TileKey> {
+        (0..4).map(|x| TileKey { z: 2, x, y: 1 }).collect()
+    }
+
+    #[test]
+    fn switching_style_starts_loading_at_once() {
+        let mut t = Tiles::new(Provider::OpenStreetMap);
+        assert_eq!(t.want(keys()).len(), 4);
+        let start = t.set_provider(Provider::CartoVoyager, None);
+        assert_eq!(start.len(), 4, "new style must start downloading immediately");
+        assert!(start.iter().all(|j| j.0 == Provider::CartoVoyager));
+    }
+
+    #[test]
+    fn keyed_style_waits_for_a_key() {
+        let mut t = Tiles::new(Provider::OpenStreetMap);
+        t.want(keys());
+        assert!(t.set_provider(Provider::ThunderforestOutdoors, None).is_empty());
+        assert!(t.needs_key());
+        let start = t.set_api_key(Some("abc".into()));
+        assert_eq!(start.len(), 4);
+        assert_eq!(start[0].3.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn rejected_key_stops_downloads() {
+        let mut t = Tiles::new(Provider::OpenStreetMap);
+        t.want(keys());
+        let start = t.set_provider(Provider::MapTilerStreets, Some("bad".into()));
+        let (provider, key, generation, _) = start[0].clone();
+        let more = t.finish(Fetched { provider, key, generation, result: Err(FetchError::KeyRejected) });
+        assert!(t.key_rejected());
+        assert!(more.is_empty());
     }
 }

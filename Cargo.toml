@@ -1,6 +1,6 @@
 [package]
 name = "timeatlas"
-version = "2.3.0"
+version = "2.4.0"
 edition = "2024"
 description = "World clock, weather and map for macOS"
 license = "MIT"
@@ -19,3 +19,6 @@ dirs = "6"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
