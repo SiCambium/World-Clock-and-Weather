@@ -1039,6 +1039,13 @@ impl App {
             .align_y(Alignment::Center),
             note,
             results,
+            rule::horizontal(1),
+            text(format!(
+                "Weather data by Open-Meteo.com (CC BY 4.0). Map tiles {}.",
+                self.tiles.provider().attribution()
+            ))
+            .size(11.5)
+            .style(muted),
         ]
         .spacing(14);
 
