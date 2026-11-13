@@ -42,7 +42,11 @@ BUNDLE_ID="${BUNDLE_ID:-io.github.sicambium.timeatlas}"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 BUILD="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
 DIST="$ROOT/dist"
-APP="$DIST/TimeAtlas.app"
+# Assemble and sign outside the repo: folders synced by iCloud (such as
+# ~/Documents) keep adding Finder metadata, which codesign rejects.
+STAGE_DIR="$(mktemp -d -t timeatlas-build)"
+trap 'rm -rf "$STAGE_DIR"' EXIT
+APP="$STAGE_DIR/TimeAtlas.app"
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
@@ -66,8 +70,7 @@ fi
 
 # --- Assemble the bundle --------------------------------------------------
 step "Assembling TimeAtlas.app"
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$DIST" "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/TimeAtlas"
 sed -e "s/__BUNDLE_ID__/$BUNDLE_ID/" -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" \
   macos/Info.plist > "$APP/Contents/Info.plist"
@@ -75,6 +78,12 @@ cp macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp macos/PrivacyInfo.xcprivacy "$APP/Contents/Resources/PrivacyInfo.xcprivacy"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
+
+# Copies the finished app from the staging folder into dist/.
+publish_app() {
+  rm -rf "$DIST/TimeAtlas.app"
+  ditto "$APP" "$DIST/TimeAtlas.app"
+}
 
 find_identity() {
   security find-identity -v -p codesigning | sed -n "s/.*\"\($1[^\"]*\)\".*/\1/p" | head -1
@@ -84,8 +93,9 @@ case "$MODE" in
   local)
     step "Ad-hoc signing for local use"
     codesign --force --deep --sign - "$APP"
-    echo "Built $APP"
-    echo "Open it with: open \"$APP\""
+    publish_app
+    echo "Built $DIST/TimeAtlas.app"
+    echo "Open it with: open \"$DIST/TimeAtlas.app\""
     ;;
 
   developer-id)
@@ -114,7 +124,9 @@ case "$MODE" in
       xcrun stapler staple "$APP"
       spctl --assess --type execute --verbose "$APP"
     fi
-    echo "Done: $APP and $DMG"
+    publish_app
+    echo "Done: $DIST/TimeAtlas.app and $DMG"
+    echo "Share the .dmg; a copy of the .app inside an iCloud-synced folder may fail strict verification."
     ;;
 
   app-store)
