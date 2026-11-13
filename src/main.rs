@@ -137,6 +137,9 @@ struct App {
     overlay: Overlay,
     notice: Option<String>,
     prefs: store::Prefs,
+    /// What is on screen now; starts from the saved defaults.
+    show_map: bool,
+    show_weather: bool,
     /// True once the user pans or zooms, so resizing stops re-framing.
     map_moved: bool,
     /// Interface scale, following the window size.
@@ -164,6 +167,8 @@ enum Message {
     MapProvider(tiles::Provider),
     ShowMap(bool),
     ShowWeather(bool),
+    DefaultShowMap(bool),
+    DefaultShowWeather(bool),
 
     OpenSettings,
     CloseOverlay,
@@ -207,6 +212,8 @@ impl App {
             settings: Settings::default(),
             overlay: Overlay::None,
             notice,
+            show_map: prefs.show_map,
+            show_weather: prefs.show_weather,
             prefs,
             map_moved: false,
             scale: 1.0,
@@ -282,7 +289,7 @@ impl App {
             }
 
             Message::RefreshWeather => {
-                if !self.prefs.show_weather || self.weather_status == WeatherStatus::Loading {
+                if !self.show_weather || self.weather_status == WeatherStatus::Loading {
                     return Task::none();
                 }
                 self.weather_status = WeatherStatus::Loading;
@@ -347,21 +354,29 @@ impl App {
             Message::TileRetryTick => fetch_tiles(self.tiles.retry_due()),
             Message::TileFetched(fetched) => fetch_tiles(self.tiles.finish(fetched)),
             Message::ShowMap(on) => {
-                self.prefs.show_map = on;
-                store::save_prefs(&self.prefs);
+                self.show_map = on;
                 if !on {
                     self.map_sized = false;
                 }
                 Task::none()
             }
             Message::ShowWeather(on) => {
-                self.prefs.show_weather = on;
-                store::save_prefs(&self.prefs);
+                self.show_weather = on;
                 if on {
                     Task::done(Message::RefreshWeather)
                 } else {
                     Task::none()
                 }
+            }
+            Message::DefaultShowMap(on) => {
+                self.prefs.show_map = on;
+                store::save_prefs(&self.prefs);
+                Task::none()
+            }
+            Message::DefaultShowWeather(on) => {
+                self.prefs.show_weather = on;
+                store::save_prefs(&self.prefs);
+                Task::none()
             }
             Message::MapProvider(provider) => {
                 if provider == self.tiles.provider() {
@@ -555,7 +570,7 @@ impl App {
         .spacing(12)
         .align_y(Alignment::Center);
 
-        let status: Element<'_, Message> = if !self.prefs.show_weather {
+        let status: Element<'_, Message> = if !self.show_weather {
             Space::new().into()
         } else {
             match &self.weather_status {
@@ -578,13 +593,27 @@ impl App {
         };
         let _ = &self.weather_status; // keep borrowck simple
 
+        let quick = |label: &'static str, on: bool, msg: fn(bool) -> Message| {
+            toggler(on).label(label).on_toggle(msg).size(18).text_size(13)
+        };
+        let toggles = container(
+            row![
+                quick("Map", self.show_map, Message::ShowMap),
+                quick("Weather", self.show_weather, Message::ShowWeather),
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center),
+        )
+        .padding([7, 12])
+        .style(style::inset);
+
         let settings = button(graphics::glyph(Glyph::Settings, 18.0))
             .padding(9)
             .style(style::icon_button)
             .on_press(Message::OpenSettings);
 
         let mut col = column![
-            row![brand, Space::new().width(Fill), status, settings]
+            row![brand, Space::new().width(Fill), status, toggles, settings]
                 .spacing(14)
                 .align_y(Alignment::Center)
         ]
@@ -611,7 +640,7 @@ impl App {
 
     fn body(&self) -> Element<'_, Message> {
         responsive(move |size| {
-            if !self.prefs.show_map {
+            if !self.show_map {
                 self.cards(size.width - 8.0)
             } else if size.width >= WIDE_LAYOUT {
                 let cards_w = (size.width * 0.42).clamp(340.0, 680.0);
@@ -760,7 +789,7 @@ impl App {
         };
 
         let mut body = column![header, time].spacing(12);
-        if self.prefs.show_weather {
+        if self.show_weather {
             body = body.push(container(weather).padding([10, 12]).style(style::inset).width(Fill));
         }
 
@@ -769,8 +798,7 @@ impl App {
             .width(Fill)
             .style(card_button)
             .on_press_maybe(
-                self.prefs
-                    .show_weather
+                self.show_weather
                     .then(|| Message::OpenDetail(place.id.clone())),
             )
             .into()
@@ -783,7 +811,7 @@ impl App {
             .map(|p| {
                 let local = tz::local(&p.timezone, self.now);
                 let mut subtitle = format!("{:02}:{:02}", local.hour(), local.minute());
-                if let Some(w) = self.weather.get(&p.id).filter(|_| self.prefs.show_weather) {
+                if let Some(w) = self.weather.get(&p.id).filter(|_| self.show_weather) {
                     subtitle.push_str(&format!(" · {}°", w.temperature.round()));
                 }
                 map::Marker {
@@ -962,9 +990,15 @@ impl App {
                 .width(Fill)
         };
         let display = column![
-            text("Show").size(14).font(INTER_SEMIBOLD),
-            switch("Map", self.prefs.show_map, Message::ShowMap),
-            switch("Weather", self.prefs.show_weather, Message::ShowWeather),
+            column![
+                text("When TimeAtlas opens").size(14).font(INTER_SEMIBOLD),
+                text("You can also switch these any time from the top bar.")
+                    .size(12.5)
+                    .style(muted),
+            ]
+            .spacing(2),
+            switch("Show the map", self.prefs.show_map, Message::DefaultShowMap),
+            switch("Show weather", self.prefs.show_weather, Message::DefaultShowWeather),
         ]
         .spacing(10);
 
