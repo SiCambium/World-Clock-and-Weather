@@ -430,30 +430,29 @@ where
             .iter()
             .map(|p| Rectangle::new(Point::new(p.x - 10.0, p.y - 32.0), Size::new(20.0, 34.0)))
             .collect();
-        let mut placed: Vec<Rectangle> = Vec::new();
-        for (marker, p) in shown.iter().map(|(m, p)| (*m, p)) {
-            let size = label_size(marker);
-            let candidates = [
-                Point::new(p.x + 12.0, p.y - 44.0),               // right, above
-                Point::new(p.x + 12.0, p.y - 6.0),                // right, below
-                Point::new(p.x - 12.0 - size.width, p.y - 44.0),  // left, above
-                Point::new(p.x - 12.0 - size.width, p.y - 6.0),   // left, below
-            ];
-            let overlap = |r: &Rectangle| -> f32 {
-                placed
-                    .iter()
-                    .chain(pins.iter())
-                    .filter_map(|o| o.intersection(r))
-                    .map(|i| i.width * i.height)
-                    .sum()
-            };
-            let best = candidates
-                .iter()
-                .map(|o| Rectangle::new(*o, size))
-                .min_by(|a, b| overlap(a).total_cmp(&overlap(b)))
-                .unwrap();
-            draw_label(&mut frame, best.position(), marker, &c);
-            placed.push(best);
+        let labels: Vec<(Size, Size)> = shown
+            .iter()
+            .map(|(m, _)| (label_size(m), compact_size(m)))
+            .collect();
+        let placed = place_labels(&points, &labels, &pins, bounds.size());
+        for ((marker, p), (rect, compact)) in shown.iter().zip(placed) {
+            // A thin leader line when the label had to move away from its pin.
+            let head = Point::new(p.x, p.y - 22.0);
+            let near = Point::new(
+                head.x.clamp(rect.x, rect.x + rect.width),
+                head.y.clamp(rect.y, rect.y + rect.height),
+            );
+            if head.distance(near) > 18.0 {
+                frame.stroke(
+                    &Path::line(head, near),
+                    Stroke::default().with_color(Color { a: 0.8, ..c.muted }).with_width(1.0),
+                );
+            }
+            if compact {
+                draw_compact_label(&mut frame, rect.position(), marker, &c);
+            } else {
+                draw_label(&mut frame, rect.position(), marker, &c);
+            }
         }
 
         vec![frame.into_geometry()]
@@ -473,6 +472,89 @@ where
             mouse::Interaction::default()
         }
     }
+}
+
+
+/// Chooses where each label goes: beside, above or below its pin, or a
+/// little further away, picking the spot that overlaps other labels, pins
+/// and the map edge the least. When the full two-line label can't fit
+/// cleanly, a one-line label is used instead. Returns the rectangle and
+/// whether it is the compact form.
+fn place_labels(
+    points: &[Point],
+    sizes: &[(Size, Size)],
+    pins: &[Rectangle],
+    area: Size,
+) -> Vec<(Rectangle, bool)> {
+    let mut placed: Vec<Rectangle> = Vec::new();
+    let mut out = Vec::new();
+    for (p, (full, compact)) in points.iter().zip(sizes) {
+        // Spots right beside the pin first, then spots fanned out along
+        // the map (joined to the pin by a leader line), nearer ones preferred.
+        let candidates = |s: Size| -> Vec<(Rectangle, f32)> {
+            let (w, h) = (s.width, s.height);
+            let head = p.y - 22.0;
+            let near = [
+                Point::new(p.x + 12.0, head - h / 2.0 - 10.0), // right, above
+                Point::new(p.x + 12.0, p.y - 6.0),             // right, below
+                Point::new(p.x - 12.0 - w, head - h / 2.0 - 10.0),
+                Point::new(p.x - 12.0 - w, p.y - 6.0),
+                Point::new(p.x - w / 2.0, head - 14.0 - h), // above
+                Point::new(p.x - w / 2.0, p.y + 6.0),       // below
+            ];
+            let mut out: Vec<(Rectangle, f32)> = near
+                .into_iter()
+                .enumerate()
+                .map(|(i, o)| (Rectangle::new(o, s), i as f32))
+                .collect();
+            let rows = [8.0, (area.height - h) / 2.0, area.height - h - 8.0, head - h - 30.0, p.y + 26.0];
+            for dx in [12.0f32, 50.0, 100.0, 160.0, 230.0] {
+                for y in rows {
+                    for x in [p.x + dx, p.x - dx - w] {
+                        let r = Rectangle::new(Point::new(x, y), s);
+                        let dist = (r.center() - Point::new(p.x, head)).x.abs()
+                            + (r.center().y - head).abs();
+                        out.push((r, 30.0 + dist * 0.4));
+                    }
+                }
+            }
+            out
+        };
+        let score = |r: &Rectangle, rank: f32| -> f32 {
+            let hits: f32 = placed
+                .iter()
+                .chain(pins.iter())
+                .filter_map(|o| o.intersection(r))
+                .map(|i| i.width * i.height)
+                .sum();
+            let inside = Rectangle::new(Point::ORIGIN, area)
+                .intersection(r)
+                .map_or(0.0, |i| i.width * i.height);
+            let outside = r.width * r.height - inside;
+            hits * 2.0 + outside * 3.0 + rank
+        };
+        let best = |s: Size| {
+            candidates(s)
+                .into_iter()
+                .map(|(r, rank)| (score(&r, rank), r))
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .unwrap()
+        };
+        let (full_score, full_rect) = best(*full);
+        let choice = if full_score < 120.0 {
+            (full_rect, false)
+        } else {
+            let (compact_score, compact_rect) = best(*compact);
+            if compact_score + 40.0 < full_score {
+                (compact_rect, true)
+            } else {
+                (full_rect, false)
+            }
+        };
+        placed.push(choice.0);
+        out.push(choice);
+    }
+    out
 }
 
 const TITLE_SIZE: f32 = 12.5;
@@ -506,6 +588,55 @@ fn draw_pin(frame: &mut Frame, p: Point, c: &style::Colors) {
     frame.fill(&pin, c.accent);
     frame.stroke(&pin, Stroke::default().with_color(Color::WHITE).with_width(1.5));
     frame.fill(&Path::circle(Point::new(p.x, p.y - 22.0), 3.5), Color::WHITE);
+}
+
+/// The time only, without the temperature, for the one-line label.
+fn compact_time(marker: &Marker) -> &str {
+    marker.subtitle.split(" · ").next().unwrap_or(&marker.subtitle)
+}
+
+fn approx_width(s: &str, size: f32) -> f32 {
+    s.chars().count() as f32 * size * 0.56
+}
+
+fn compact_size(marker: &Marker) -> Size {
+    Size::new(
+        approx_width(&marker.title, TITLE_SIZE) + 6.0 + approx_width(compact_time(marker), SUB_SIZE) + 16.0,
+        22.0,
+    )
+}
+
+/// A one-line pill: name and time.
+fn draw_compact_label(frame: &mut Frame, origin: Point, marker: &Marker, c: &style::Colors) {
+    let size = compact_size(marker);
+    let pill = Path::rounded_rectangle(origin, size, 8.0.into());
+    frame.fill(
+        &Path::rounded_rectangle(origin + Vector::new(0.0, 2.0), size, 8.0.into()),
+        Color::from_rgba(0.0, 0.0, 0.0, 0.18),
+    );
+    frame.fill(&pill, Color { a: 0.95, ..c.surface });
+    frame.stroke(&pill, Stroke::default().with_color(c.border).with_width(1.0));
+    let mid = origin.y + size.height / 2.0;
+    frame.fill_text(Text {
+        content: marker.title.clone(),
+        position: Point::new(origin.x + 8.0, mid),
+        color: c.text,
+        size: TITLE_SIZE.into(),
+        font: style::INTER_SEMIBOLD,
+        align_x: alignment::Horizontal::Left.into(),
+        align_y: alignment::Vertical::Center,
+        ..Text::default()
+    });
+    frame.fill_text(Text {
+        content: compact_time(marker).to_string(),
+        position: Point::new(origin.x + 8.0 + approx_width(&marker.title, TITLE_SIZE) + 6.0, mid),
+        color: c.muted,
+        size: SUB_SIZE.into(),
+        font: style::INTER,
+        align_x: alignment::Horizontal::Left.into(),
+        align_y: alignment::Vertical::Center,
+        ..Text::default()
+    });
 }
 
 /// A pill with the place name and its live local time.
@@ -595,5 +726,35 @@ mod strip_tests {
         v.fit(&pts);
         let xs: Vec<f32> = pts.iter().map(|(lon, lat)| v.to_screen(project(*lon, *lat)).x).collect();
         assert!(xs.windows(2).all(|w| w[0] < w[1]), "{xs:?}");
+    }
+
+    #[test]
+    fn strip_labels_do_not_overlap() {
+        let mut v = View {
+            size: Size::new(1200.0, 156.0),
+            ..View::default()
+        };
+        // London, New York, Tokyo, Sydney, Dubai, Mumbai.
+        let pts = [
+            (-0.1278, 51.5074), (-74.006, 40.7128), (139.69, 35.69),
+            (151.2, -33.87), (55.27, 25.2), (72.88, 19.07),
+        ];
+        v.fit(&pts);
+        let names = ["London", "New York", "Tokyo", "Sydney", "Dubai", "Mumbai"];
+        let markers: Vec<Marker> = pts.iter().zip(names).map(|((lon, lat), n)| Marker {
+            lon: *lon, lat: *lat, title: n.to_string(), subtitle: "11:57 · 4°".to_string(),
+        }).collect();
+        let points: Vec<Point> = markers.iter().map(|m| v.to_screen(project(m.lon, m.lat))).collect();
+        let sizes: Vec<(Size, Size)> = markers.iter().map(|m| (label_size(m), compact_size(m))).collect();
+        let pins: Vec<Rectangle> = points.iter()
+            .map(|p| Rectangle::new(Point::new(p.x - 10.0, p.y - 32.0), Size::new(20.0, 34.0))).collect();
+        let placed = place_labels(&points, &sizes, &pins, v.size);
+        eprintln!("zoom {} points {points:?}", v.zoom);
+        for (i, (a, ca)) in placed.iter().enumerate() {
+            eprintln!("{} {a:?} compact={ca}", names[i]);
+            for (b, _) in &placed[i + 1..] {
+                assert!(a.intersection(b).is_none(), "{a:?} overlaps {b:?}");
+            }
+        }
     }
 }
