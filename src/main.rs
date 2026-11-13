@@ -39,7 +39,9 @@ const CARD_MIN_WIDTH: f32 = 300.0;
 /// Window size at which everything is drawn at 100%. Larger windows scale
 /// text and layout up proportionally; smaller ones scale down a little
 /// before switching to the stacked layout.
-const BASE_SIZE: Size = Size::new(1240.0, 820.0);
+// The layout is designed at this size; larger or smaller windows scale it.
+// Tall enough for two rows of cards in any clock style plus the map.
+const BASE_SIZE: Size = Size::new(1240.0, 940.0);
 const MIN_SCALE: f32 = 0.85;
 const MAX_SCALE: f32 = 1.8;
 
@@ -720,7 +722,17 @@ impl App {
             let left_over = size.height - self.cards_height - SECTION_GAP;
             let map_height = left_over.min(size.height * MAP_MAX_SHARE);
             if map_height < MAP_MIN_HEIGHT {
-                return cards;
+                // Say why the map is missing rather than leave a blank gap.
+                if left_over < 24.0 {
+                    return cards;
+                }
+                return column![
+                    container(cards).height(Fill),
+                    container(text("Make the window taller to see the map").size(12).style(muted))
+                        .center_x(Fill),
+                ]
+                .spacing(4)
+                .into();
             }
             column![
                 container(cards).height(Fill),
