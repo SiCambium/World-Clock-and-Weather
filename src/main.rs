@@ -16,7 +16,7 @@ use chrono::{DateTime, Datelike, Local, Timelike, Utc};
 use iced::keyboard;
 use iced::theme::Mode;
 use iced::widget::{
-    Space, button, canvas, center, column, container, mouse_area, opaque, pick_list, responsive, row, rule, toggler,
+    Space, button, canvas, center, column, container, mouse_area, opaque, pick_list, responsive, rich_text, row, rule, span, toggler,
     scrollable, sensor, stack, text, text_input,
 };
 use iced::{
@@ -175,6 +175,7 @@ enum Message {
     ShowMap(bool),
     ShowWeather(bool),
     DefaultShowMap(bool),
+    ClockStyle(store::ClockStyle),
     DefaultShowWeather(bool),
 
     OpenSettings,
@@ -243,7 +244,7 @@ impl App {
 
     fn subscription(&self) -> Subscription<Message> {
         let mut subs = vec![
-            iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick),
+            iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick),
             iced::time::every(Duration::from_secs(2)).map(|_| Message::TileRetryTick),
             iced::system::theme_changes().map(Message::ThemeChanged),
             window::resize_events().map(|(_, size)| Message::WindowResized(size)),
@@ -379,6 +380,11 @@ impl App {
                 } else {
                     Task::none()
                 }
+            }
+            Message::ClockStyle(style) => {
+                self.prefs.clock_style = style;
+                store::save_prefs(&self.prefs);
+                Task::none()
             }
             Message::DefaultShowMap(on) => {
                 self.prefs.show_map = on;
@@ -728,33 +734,41 @@ impl App {
         ]
         .align_y(Alignment::Start);
 
-        let time = row![
-            column![
-                row![
-                    text(format!("{:02}:{:02}", local.hour(), local.minute()))
-                        .size(40)
-                        .font(INTER_LIGHT),
-                    text(format!(":{:02}", local.second()))
-                        .size(16)
-                        .style(muted)
-                        .font(INTER_MEDIUM),
-                ]
-                .align_y(Alignment::End)
-                .spacing(2),
-                text(format!(
-                    "{} {} {}{}",
-                    weekday(local.weekday()),
-                    local.day(),
-                    month(local.month()),
-                    day_note
-                ))
-                .size(12.5)
-                .style(muted),
-            ]
-            .spacing(2)
-            .width(Fill),
-            graphics::clock(local.hour(), local.minute(), local.second(), 60.0),
-        ]
+        let style = self.prefs.clock_style;
+        let date = text(format!(
+            "{} {} {}{}",
+            weekday(local.weekday()),
+            local.day(),
+            month(local.month()),
+            day_note
+        ))
+        .size(12.5)
+        .style(muted);
+
+        let mut info = column![].spacing(2).width(Fill);
+        if style.digital() {
+            // One line of rich text so the small seconds share the big
+            // digits' baseline.
+            let c = style::colors(&self.theme());
+            info = info.push(rich_text![
+                span::<(), _>(format!("{:02}:{:02}", local.hour(), local.minute()))
+                    .size(40)
+                    .font(INTER_LIGHT)
+                    .color(c.text),
+                span::<(), _>(format!(":{:02}", local.second()))
+                    .size(18)
+                    .font(INTER_LIGHT)
+                    .color(c.muted),
+            ]);
+        }
+        info = info.push(date);
+
+        let time = if style.analog() {
+            let size = if style.digital() { 60.0 } else { 84.0 };
+            row![info, graphics::clock(local.hour(), local.minute(), local.second(), size)]
+        } else {
+            row![info]
+        }
         .align_y(Alignment::Center);
 
         let weather: Element<'_, Message> = match self.weather.get(&place.id) {
@@ -864,20 +878,22 @@ impl App {
                     .style(style::icon_button)
                     .on_press(msg),
                 container(text(tip).size(12)).padding([4, 8]).style(style::inset),
-                iced::widget::tooltip::Position::Left,
+                iced::widget::tooltip::Position::Bottom,
             )
         };
 
         let controls = container(
-            column![
+            // A single row, so the controls fit even when the map is a
+            // short strip under the clocks.
+            row![
                 control(Glyph::Plus, Message::MapZoom(1.0), "Zoom in"),
                 control(Glyph::Minus, Message::MapZoom(-1.0), "Zoom out"),
-                rule::horizontal(1),
+                rule::vertical(1),
                 control(Glyph::Fit, Message::MapFit, "Show all places"),
                 control(Glyph::Refresh, Message::MapRefresh, "Reload map"),
             ]
             .spacing(2)
-            .width(31),
+            .height(31),
         )
         .padding(3)
         .style(style::map_control_group);
@@ -1017,6 +1033,30 @@ impl App {
         ]
         .spacing(10);
 
+        let clock_style = column![
+            text("Clock style").size(14).font(INTER_SEMIBOLD),
+            container(
+                row(store::ClockStyle::ALL.iter().map(|&c| {
+                    button(
+                        text(c.label())
+                            .size(13)
+                            .font(INTER_MEDIUM)
+                            .width(Fill)
+                            .align_x(alignment::Horizontal::Center),
+                    )
+                    .padding([6, 12])
+                    .width(Fill)
+                    .style(style::tab_button(self.prefs.clock_style == c))
+                    .on_press(Message::ClockStyle(c))
+                    .into()
+                }))
+                .spacing(4),
+            )
+            .padding(4)
+            .style(style::inset),
+        ]
+        .spacing(8);
+
         let map_style = column![
             text("Map style").size(14).font(INTER_SEMIBOLD),
             pick_list(
@@ -1032,6 +1072,8 @@ impl App {
 
         let content = column![
             self.panel_header("Settings".into(), String::new()),
+            clock_style,
+            rule::horizontal(1),
             display,
             rule::horizontal(1),
             map_style,

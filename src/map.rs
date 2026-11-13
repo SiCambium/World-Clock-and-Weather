@@ -26,6 +26,10 @@ pub struct View {
     pub size: Size,
     /// Deepest zoom the current tile provider offers.
     pub max_zoom: u8,
+    /// Middle of the group of places (normalised x). When the world repeats
+    /// across the view, pins are drawn on the copy nearest this, so the
+    /// group always stays together and in west-to-east order.
+    pub anchor: f64,
 }
 
 impl Default for View {
@@ -35,6 +39,7 @@ impl Default for View {
             zoom: 2.0,
             size: Size::new(800.0, 400.0),
             max_zoom: 19,
+            anchor: 0.5,
         }
     }
 }
@@ -52,7 +57,9 @@ impl View {
     }
 
     fn min_zoom(&self) -> f64 {
-        // Never show empty space above or below the world.
+        // Never show empty space above or below the world. A wide, short map
+        // may show the world more than once across; pins are drawn once, on
+        // the copy nearest the centre, which `fit` places on the cities.
         (self.size.height as f64 / TILE).log2().max(0.0)
     }
 
@@ -72,8 +79,12 @@ impl View {
     /// choosing the horizontal world copy closest to the centre.
     fn to_screen(&self, p: (f64, f64)) -> Point {
         let w = self.world_px();
-        let mut dx = p.0 - self.center.0;
-        dx -= dx.round();
+        // Choose the copy of the point nearest the group's anchor...
+        let mut x = p.0;
+        x -= (x - self.anchor).round();
+        // ...then the copy of that group nearest the view centre.
+        let mut dx = x - self.center.0;
+        dx -= (self.anchor - self.center.0).round();
         Point::new(
             (self.size.width as f64 / 2.0 + dx * w) as f32,
             (self.size.height as f64 / 2.0 + (p.1 - self.center.1) * w) as f32,
@@ -110,25 +121,38 @@ impl View {
             return;
         }
         let projected: Vec<(f64, f64)> = points.iter().map(|(lon, lat)| project(*lon, *lat)).collect();
-        let (mut x0, mut x1, mut y0, mut y1) = (1.0f64, 0.0f64, 1.0f64, 0.0f64);
-        for (x, y) in &projected {
-            x0 = x0.min(*x);
-            x1 = x1.max(*x);
+        let (mut y0, mut y1) = (1.0f64, 0.0f64);
+        for (_, y) in &projected {
             y0 = y0.min(*y);
             y1 = y1.max(*y);
         }
+        // Horizontally, treat the world as a ring: put the widest empty gap
+        // between places at the edges so the places form one group.
+        let mut xs: Vec<f64> = projected.iter().map(|(x, _)| *x).collect();
+        xs.sort_by(f64::total_cmp);
+        let n = xs.len();
+        let (mut gap, mut after) = (xs[0] + 1.0 - xs[n - 1], 0usize);
+        for i in 0..n - 1 {
+            if xs[i + 1] - xs[i] > gap {
+                gap = xs[i + 1] - xs[i];
+                after = i + 1;
+            }
+        }
+        let x0 = xs[after];
+        let x1 = if after == 0 { xs[n - 1] } else { xs[after - 1] + 1.0 };
+        self.anchor = ((x0 + x1) / 2.0).rem_euclid(1.0);
         // Extra room on the right and top for the name labels.
         let w = (self.size.width as f64 - 60.0 - 170.0).max(50.0);
         let h = (self.size.height as f64 - 90.0 - 50.0).max(50.0);
         let span_x = (x1 - x0).max(1e-6);
         let span_y = (y1 - y0).max(1e-6);
         let zoom = (w / (span_x * TILE)).min(h / (span_y * TILE)).log2();
-        self.zoom = zoom.min(MAX_FIT_ZOOM);
-        let world = TILE * 2f64.powf(self.zoom);
+        self.zoom = zoom.min(MAX_FIT_ZOOM).clamp(self.min_zoom(), self.max_zoom());
+        let world_px = TILE * 2f64.powf(self.zoom);
         // Shift so the labels' extra space is balanced.
         self.center = (
-            (x0 + x1) / 2.0 + 55.0 / world,
-            (y0 + y1) / 2.0 - 20.0 / world,
+            ((x0 + x1) / 2.0 + 55.0 / world_px).rem_euclid(1.0),
+            (y0 + y1) / 2.0 - 20.0 / world_px,
         );
         self.clamp();
     }
@@ -393,11 +417,12 @@ where
         }
 
         // Pins first, then labels placed to avoid each other and the pins.
-        let points: Vec<Point> = self
+        let shown: Vec<(&Marker, Point)> = self
             .markers
             .iter()
-            .map(|m| view.to_screen(project(m.lon, m.lat)))
+            .map(|m| (m, view.to_screen(project(m.lon, m.lat))))
             .collect();
+        let points: Vec<Point> = shown.iter().map(|(_, p)| *p).collect();
         for p in &points {
             draw_pin(&mut frame, *p, &c);
         }
@@ -406,15 +431,13 @@ where
             .map(|p| Rectangle::new(Point::new(p.x - 10.0, p.y - 32.0), Size::new(20.0, 34.0)))
             .collect();
         let mut placed: Vec<Rectangle> = Vec::new();
-        for (marker, p) in self.markers.iter().zip(&points) {
+        for (marker, p) in shown.iter().map(|(m, p)| (*m, p)) {
             let size = label_size(marker);
             let candidates = [
                 Point::new(p.x + 12.0, p.y - 44.0),               // right, above
                 Point::new(p.x + 12.0, p.y - 6.0),                // right, below
                 Point::new(p.x - 12.0 - size.width, p.y - 44.0),  // left, above
                 Point::new(p.x - 12.0 - size.width, p.y - 6.0),   // left, below
-                Point::new(p.x - size.width / 2.0, p.y - 36.0 - size.height - 4.0), // centred above
-                Point::new(p.x - size.width / 2.0, p.y + 6.0),    // centred below
             ];
             let overlap = |r: &Rectangle| -> f32 {
                 placed
@@ -550,9 +573,27 @@ mod tests {
             zoom: 2.0,
             size: Size::new(600.0, 400.0),
             max_zoom: 19,
+            anchor: 0.5,
         };
         let keys = v.visible_tiles();
         assert!(keys.iter().all(|k| k.x < 4 && k.y < 4));
         assert!(keys.iter().any(|k| k.x == 3) && keys.iter().any(|k| k.x == 0));
+    }
+}
+
+#[cfg(test)]
+mod strip_tests {
+    use super::*;
+
+    #[test]
+    fn wide_strip_keeps_west_to_east_order() {
+        let mut v = View {
+            size: Size::new(1200.0, 156.0),
+            ..View::default()
+        };
+        let pts = [(-74.006, 40.7128), (-0.1278, 51.5074), (72.88, 19.07), (139.69, 35.69), (151.2, -33.87)];
+        v.fit(&pts);
+        let xs: Vec<f32> = pts.iter().map(|(lon, lat)| v.to_screen(project(*lon, *lat)).x).collect();
+        assert!(xs.windows(2).all(|w| w[0] < w[1]), "{xs:?}");
     }
 }

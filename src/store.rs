@@ -157,6 +157,37 @@ pub struct Prefs {
     pub show_map: bool,
     #[serde(default = "yes")]
     pub show_weather: bool,
+    #[serde(default)]
+    pub clock_style: ClockStyle,
+}
+
+/// How each place's time is shown.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClockStyle {
+    Digital,
+    Analog,
+    #[default]
+    Both,
+}
+
+impl ClockStyle {
+    pub const ALL: [ClockStyle; 3] = [ClockStyle::Digital, ClockStyle::Analog, ClockStyle::Both];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ClockStyle::Digital => "Digital",
+            ClockStyle::Analog => "Analogue",
+            ClockStyle::Both => "Both",
+        }
+    }
+
+    pub fn digital(self) -> bool {
+        self != ClockStyle::Analog
+    }
+
+    pub fn analog(self) -> bool {
+        self != ClockStyle::Digital
+    }
 }
 
 fn yes() -> bool {
@@ -169,6 +200,7 @@ impl Default for Prefs {
             map_provider: Default::default(),
             show_map: true,
             show_weather: true,
+            clock_style: ClockStyle::Both,
         }
     }
 }
