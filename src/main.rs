@@ -29,7 +29,11 @@ use style::{INTER, INTER_LIGHT, INTER_MEDIUM, INTER_SEMIBOLD};
 
 const WEATHER_REFRESH: Duration = Duration::from_secs(10 * 60);
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
-const WIDE_LAYOUT: f32 = 1060.0;
+/// The map never takes more than this share of the space below the header.
+const MAP_MAX_SHARE: f32 = 1.0 / 3.0;
+/// Below this height the map is hidden so every clock stays visible.
+const MAP_MIN_HEIGHT: f32 = 130.0;
+const SECTION_GAP: f32 = 16.0;
 const CARD_MIN_WIDTH: f32 = 300.0;
 /// Window size at which everything is drawn at 100%. Larger windows scale
 /// text and layout up proportionally; smaller ones scale down a little
@@ -142,6 +146,8 @@ struct App {
     show_weather: bool,
     /// True once the user pans or zooms, so resizing stops re-framing.
     map_moved: bool,
+    /// Natural height of the clock cards, as last laid out.
+    cards_height: f32,
     /// Interface scale, following the window size.
     scale: f32,
 }
@@ -150,6 +156,7 @@ struct App {
 enum Message {
     Tick,
     WindowResized(Size),
+    CardsMeasured(Size),
     ThemeChanged(Mode),
     Escape,
     DismissNotice,
@@ -216,6 +223,7 @@ impl App {
             show_weather: prefs.show_weather,
             prefs,
             map_moved: false,
+            cards_height: 0.0,
             scale: 1.0,
         };
         let tasks = Task::batch([
@@ -263,6 +271,10 @@ impl App {
         match message {
             Message::Tick => {
                 self.now = Utc::now();
+                Task::none()
+            }
+            Message::CardsMeasured(size) => {
+                self.cards_height = size.height;
                 Task::none()
             }
             Message::WindowResized(size) => {
@@ -639,26 +651,25 @@ impl App {
     }
 
     fn body(&self) -> Element<'_, Message> {
+        // Clocks always come first, above the map. The map gets what is
+        // left, up to a third of the space, and disappears entirely rather
+        // than push any clock out of view.
         responsive(move |size| {
+            let cards = self.cards(size.width - 8.0);
             if !self.show_map {
-                self.cards(size.width - 8.0)
-            } else if size.width >= WIDE_LAYOUT {
-                let cards_w = (size.width * 0.42).clamp(340.0, 680.0);
-                row![
-                    container(self.cards(cards_w - 8.0)).width(cards_w).height(Fill),
-                    self.map_panel(),
-                ]
-                .spacing(18)
-                .into()
-            } else {
-                column![
-                    container(self.cards(size.width - 8.0))
-                        .height(Length::FillPortion(5)),
-                    container(self.map_panel()).height(Length::FillPortion(4)),
-                ]
-                .spacing(16)
-                .into()
+                return cards;
             }
+            let left_over = size.height - self.cards_height - SECTION_GAP;
+            let map_height = left_over.min(size.height * MAP_MAX_SHARE);
+            if map_height < MAP_MIN_HEIGHT {
+                return cards;
+            }
+            column![
+                container(cards).height(Fill),
+                container(self.map_panel()).height(map_height),
+            ]
+            .spacing(SECTION_GAP)
+            .into()
         })
         .into()
     }
@@ -680,11 +691,15 @@ impl App {
             grid = grid.push(r);
         }
 
-        scrollable(container(grid).padding(iced::Padding {
+        let measured = sensor(container(grid).padding(iced::Padding {
             right: 8.0,
             bottom: 4.0,
             ..iced::Padding::ZERO
         }))
+        .on_show(Message::CardsMeasured)
+        .on_resize(Message::CardsMeasured);
+
+        scrollable(measured)
         .style(style::scroll)
         .height(Fill)
         .into()
