@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Required for the Mac App Store; also used for the Developer ID build. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- Outgoing HTTPS only: weather, city search and map tiles. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>

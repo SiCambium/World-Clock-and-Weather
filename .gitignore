@@ -3,3 +3,5 @@ node_modules
 frontend/wailsjs
 .DS_Store
 /timeatlas
+/target
+/dist
