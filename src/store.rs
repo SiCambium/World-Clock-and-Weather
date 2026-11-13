@@ -185,9 +185,6 @@ impl ClockStyle {
         self != ClockStyle::Analog
     }
 
-    pub fn analog(self) -> bool {
-        self != ClockStyle::Digital
-    }
 }
 
 fn yes() -> bool {

@@ -435,19 +435,22 @@ where
             .map(|(m, _)| (label_size(m), compact_size(m)))
             .collect();
         let placed = place_labels(&points, &labels, &pins, bounds.size());
-        for ((marker, p), (rect, compact)) in shown.iter().zip(placed) {
-            // A thin leader line when the label had to move away from its pin.
+        // Leader lines first, so no line ever crosses over a label.
+        for ((_, p), (rect, _)) in shown.iter().zip(&placed) {
             let head = Point::new(p.x, p.y - 22.0);
             let near = Point::new(
                 head.x.clamp(rect.x, rect.x + rect.width),
                 head.y.clamp(rect.y, rect.y + rect.height),
             );
             if head.distance(near) > 18.0 {
-                frame.stroke(
-                    &Path::line(head, near),
-                    Stroke::default().with_color(Color { a: 0.8, ..c.muted }).with_width(1.0),
-                );
+                // A light halo under an accent line keeps it visible on any map.
+                let line = Path::line(head, near);
+                frame.stroke(&line, Stroke::default().with_color(Color { a: 0.7, ..c.surface }).with_width(4.0));
+                frame.stroke(&line, Stroke::default().with_color(c.accent).with_width(1.75));
+                frame.fill(&Path::circle(near, 2.5), c.accent);
             }
+        }
+        for ((marker, _), (rect, compact)) in shown.iter().zip(placed) {
             if compact {
                 draw_compact_label(&mut frame, rect.position(), marker, &c);
             } else {
@@ -521,10 +524,12 @@ fn place_labels(
             out
         };
         let score = |r: &Rectangle, rank: f32| -> f32 {
+            // Keep a small gap between labels, not just no overlap.
+            let padded = r.expand(4.0);
             let hits: f32 = placed
                 .iter()
                 .chain(pins.iter())
-                .filter_map(|o| o.intersection(r))
+                .filter_map(|o| o.intersection(&padded))
                 .map(|i| i.width * i.height)
                 .sum();
             let inside = Rectangle::new(Point::ORIGIN, area)

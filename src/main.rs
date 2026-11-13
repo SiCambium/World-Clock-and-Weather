@@ -684,12 +684,13 @@ impl App {
         let gap = 14.0;
         let cols = (((width + gap) / (CARD_MIN_WIDTH + gap)).floor() as usize).max(1);
         let places = self.sorted_places();
+        let card_width = (width - 8.0 - gap * (cols as f32 - 1.0)) / cols as f32;
 
         let mut grid = column![].spacing(gap);
         for chunk in places.chunks(cols) {
             let mut r = row![].spacing(gap);
             for place in chunk {
-                r = r.push(container(self.card(place)).width(Length::FillPortion(1)));
+                r = r.push(container(self.card(place, card_width)).width(Length::FillPortion(1)));
             }
             for _ in chunk.len()..cols {
                 r = r.push(Space::new().width(Length::FillPortion(1)));
@@ -711,7 +712,7 @@ impl App {
         .into()
     }
 
-    fn card<'a>(&'a self, place: &'a Place) -> Element<'a, Message> {
+    fn card<'a>(&'a self, place: &'a Place, card_width: f32) -> Element<'a, Message> {
         let local = tz::local(&place.timezone, self.now);
         let offset = tz::offset_minutes(&place.timezone, self.now);
         let today = Local::now().date_naive();
@@ -745,33 +746,82 @@ impl App {
         .size(12.5)
         .style(muted);
 
-        let mut info = column![].spacing(2).width(Fill);
+        // One clock face on its own is drawn large, with the weather beside
+        // it; with both, the clocks share a row and the weather sits below.
+        let single = style != store::ClockStyle::Both;
+        // Room left for a single clock once the card padding and the
+        // weather panel beside it are taken off.
+        let room = card_width - 32.0 - if self.show_weather { 118.0 + 24.0 + 12.0 } else { 0.0 } - 8.0;
+        let digits = if single { (room / 3.5).clamp(40.0, 72.0) } else { 40.0 };
+        let secs = digits * 0.42;
+        let face_size = room.clamp(96.0, 150.0);
+
+        let mut info = column![].spacing(2);
         if style.digital() {
             // One line of rich text so the small seconds share the big
             // digits' baseline.
             let c = style::colors(&self.theme());
             info = info.push(rich_text![
                 span::<(), _>(format!("{:02}:{:02}", local.hour(), local.minute()))
-                    .size(40)
+                    .size(digits)
                     .font(INTER_LIGHT)
                     .color(c.text),
                 span::<(), _>(format!(":{:02}", local.second()))
-                    .size(18)
+                    .size(secs)
                     .font(INTER_LIGHT)
                     .color(c.muted),
             ]);
         }
-        info = info.push(date);
+        let face = |size: f32| graphics::clock(local.hour(), local.minute(), local.second(), size);
+        let time: Element<'_, Message> = match style {
+            store::ClockStyle::Both => row![info.push(date).width(Fill), face(88.0)]
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .into(),
+            store::ClockStyle::Digital => info.push(date).into(),
+            store::ClockStyle::Analog => column![face(face_size), date]
+                .spacing(8)
+                .align_x(Alignment::Center)
+                .into(),
+        };
 
-        let time = if style.analog() {
-            let size = if style.digital() { 60.0 } else { 84.0 };
-            row![info, graphics::clock(local.hour(), local.minute(), local.second(), size)]
+        let mut body = column![header].spacing(12);
+        if !self.show_weather {
+            body = body.push(time);
+        } else if single {
+            body = body.push(
+                row![
+                    container(time).center_x(Fill),
+                    container(self.side_weather(place))
+                        .padding([10, 12])
+                        .style(style::inset),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+            );
         } else {
-            row![info]
+            body = body.push(time).push(
+                container(self.weather_block(place))
+                    .padding([10, 12])
+                    .style(style::inset)
+                    .width(Fill),
+            );
         }
-        .align_y(Alignment::Center);
 
-        let weather: Element<'_, Message> = match self.weather.get(&place.id) {
+        button(body)
+            .padding(16)
+            .width(Fill)
+            .style(card_button)
+            .on_press_maybe(
+                self.show_weather
+                    .then(|| Message::OpenDetail(place.id.clone())),
+            )
+            .into()
+    }
+
+    /// The full weather panel shown under the clocks.
+    fn weather_block<'a>(&'a self, place: &'a Place) -> Element<'a, Message> {
+        match self.weather.get(&place.id) {
             Some(w) => {
                 let main = row![
                     graphics::weather_icon(w.code, w.is_day, 42.0),
@@ -815,22 +865,43 @@ impl App {
                 .align_y(Alignment::Center)
                 .into()
             }
-        };
-
-        let mut body = column![header, time].spacing(12);
-        if self.show_weather {
-            body = body.push(container(weather).padding([10, 12]).style(style::inset).width(Fill));
         }
+    }
 
-        button(body)
-            .padding(16)
-            .width(Fill)
-            .style(card_button)
-            .on_press_maybe(
-                self.show_weather
-                    .then(|| Message::OpenDetail(place.id.clone())),
-            )
-            .into()
+    /// A narrow weather panel that sits beside a single large clock.
+    fn side_weather<'a>(&'a self, place: &'a Place) -> Element<'a, Message> {
+        match self.weather.get(&place.id) {
+            Some(w) => column![
+                row![
+                    graphics::weather_icon(w.code, w.is_day, 34.0),
+                    text(format!("{}°", w.temperature.round())).size(24).font(INTER_SEMIBOLD),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+                text(model::condition_label(w.code)).size(12).style(muted),
+                text(format!("H {}°  L {}°", fmt_temp(w.high), fmt_temp(w.low)))
+                    .size(12)
+                    .font(INTER_MEDIUM),
+                text(format!("Feels {}°", w.apparent.round())).size(11.5).style(muted),
+                text("Forecast ›").size(11.5).style(accent).font(INTER_MEDIUM),
+            ]
+            .spacing(3)
+            .width(118)
+            .into(),
+            None => {
+                let msg = match &self.weather_status {
+                    WeatherStatus::Failed(_) => "Weather unavailable",
+                    _ => "Loading weather…",
+                };
+                column![
+                    graphics::weather_icon(-1, true, 34.0),
+                    text(msg).size(12).style(muted),
+                ]
+                .spacing(6)
+                .width(118)
+                .into()
+            }
+        }
     }
 
     fn map_panel(&self) -> Element<'_, Message> {
