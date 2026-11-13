@@ -392,9 +392,45 @@ where
             );
         }
 
-        for marker in &self.markers {
-            let p = view.to_screen(project(marker.lon, marker.lat));
-            draw_marker(&mut frame, p, marker, &c);
+        // Pins first, then labels placed to avoid each other and the pins.
+        let points: Vec<Point> = self
+            .markers
+            .iter()
+            .map(|m| view.to_screen(project(m.lon, m.lat)))
+            .collect();
+        for p in &points {
+            draw_pin(&mut frame, *p, &c);
+        }
+        let pins: Vec<Rectangle> = points
+            .iter()
+            .map(|p| Rectangle::new(Point::new(p.x - 10.0, p.y - 32.0), Size::new(20.0, 34.0)))
+            .collect();
+        let mut placed: Vec<Rectangle> = Vec::new();
+        for (marker, p) in self.markers.iter().zip(&points) {
+            let size = label_size(marker);
+            let candidates = [
+                Point::new(p.x + 12.0, p.y - 44.0),               // right, above
+                Point::new(p.x + 12.0, p.y - 6.0),                // right, below
+                Point::new(p.x - 12.0 - size.width, p.y - 44.0),  // left, above
+                Point::new(p.x - 12.0 - size.width, p.y - 6.0),   // left, below
+                Point::new(p.x - size.width / 2.0, p.y - 36.0 - size.height - 4.0), // centred above
+                Point::new(p.x - size.width / 2.0, p.y + 6.0),    // centred below
+            ];
+            let overlap = |r: &Rectangle| -> f32 {
+                placed
+                    .iter()
+                    .chain(pins.iter())
+                    .filter_map(|o| o.intersection(r))
+                    .map(|i| i.width * i.height)
+                    .sum()
+            };
+            let best = candidates
+                .iter()
+                .map(|o| Rectangle::new(*o, size))
+                .min_by(|a, b| overlap(a).total_cmp(&overlap(b)))
+                .unwrap();
+            draw_label(&mut frame, best.position(), marker, &c);
+            placed.push(best);
         }
 
         vec![frame.into_geometry()]
@@ -416,8 +452,19 @@ where
     }
 }
 
-fn draw_marker(frame: &mut Frame, p: Point, marker: &Marker, c: &style::Colors) {
-    // Pin: a teardrop with a white core.
+const TITLE_SIZE: f32 = 12.5;
+const SUB_SIZE: f32 = 11.5;
+
+fn label_size(marker: &Marker) -> Size {
+    let approx = |s: &str, size: f32| s.chars().count() as f32 * size * 0.56;
+    Size::new(
+        approx(&marker.title, TITLE_SIZE).max(approx(&marker.subtitle, SUB_SIZE)) + 20.0,
+        38.0,
+    )
+}
+
+fn draw_pin(frame: &mut Frame, p: Point, c: &style::Colors) {
+    // A teardrop with a white core.
     let pin = Path::new(|b| {
         let r = 9.0;
         let cy = p.y - 22.0;
@@ -436,17 +483,14 @@ fn draw_marker(frame: &mut Frame, p: Point, marker: &Marker, c: &style::Colors) 
     frame.fill(&pin, c.accent);
     frame.stroke(&pin, Stroke::default().with_color(Color::WHITE).with_width(1.5));
     frame.fill(&Path::circle(Point::new(p.x, p.y - 22.0), 3.5), Color::WHITE);
+}
 
-    // Label pill with name and live local time.
-    let title_size = 12.5;
-    let sub_size = 11.5;
-    let approx = |s: &str, size: f32| s.chars().count() as f32 * size * 0.56;
-    let width = approx(&marker.title, title_size).max(approx(&marker.subtitle, sub_size)) + 20.0;
-    let height = 38.0;
-    let origin = Point::new(p.x + 12.0, p.y - 44.0);
-    let pill = Path::rounded_rectangle(origin, Size::new(width, height), 9.0.into());
+/// A pill with the place name and its live local time.
+fn draw_label(frame: &mut Frame, origin: Point, marker: &Marker, c: &style::Colors) {
+    let size = label_size(marker);
+    let pill = Path::rounded_rectangle(origin, size, 9.0.into());
     frame.fill(
-        &Path::rounded_rectangle(origin + Vector::new(0.0, 2.0), Size::new(width, height), 9.0.into()),
+        &Path::rounded_rectangle(origin + Vector::new(0.0, 2.0), size, 9.0.into()),
         Color::from_rgba(0.0, 0.0, 0.0, 0.18),
     );
     frame.fill(&pill, Color { a: 0.95, ..c.surface });
@@ -455,7 +499,7 @@ fn draw_marker(frame: &mut Frame, p: Point, marker: &Marker, c: &style::Colors) 
         content: marker.title.clone(),
         position: origin + Vector::new(10.0, 6.0),
         color: c.text,
-        size: title_size.into(),
+        size: TITLE_SIZE.into(),
         font: style::INTER_SEMIBOLD,
         align_x: alignment::Horizontal::Left.into(),
         align_y: alignment::Vertical::Top,
@@ -465,7 +509,7 @@ fn draw_marker(frame: &mut Frame, p: Point, marker: &Marker, c: &style::Colors) 
         content: marker.subtitle.clone(),
         position: origin + Vector::new(10.0, 21.0),
         color: c.muted,
-        size: sub_size.into(),
+        size: SUB_SIZE.into(),
         font: style::INTER,
         align_x: alignment::Horizontal::Left.into(),
         align_y: alignment::Vertical::Top,
