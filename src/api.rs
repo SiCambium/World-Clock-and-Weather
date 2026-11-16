@@ -32,13 +32,13 @@ async fn get_json<T: for<'de> Deserialize<'de>>(
         .query(query)
         .send()
         .await
-        .map_err(|e| format!("Could not reach the {service} service ({e})."))?;
+        .map_err(|e| format!("Could not reach the {service} service ({}).", e.without_url()))?;
     if !resp.status().is_success() {
         return Err(format!("The {service} service returned {}.", resp.status()));
     }
     resp.json::<T>()
         .await
-        .map_err(|e| format!("Could not read the {service} response ({e})."))
+        .map_err(|e| format!("Could not read the {service} response ({}).", e.without_url()))
 }
 
 // --- Geocoding -------------------------------------------------------------

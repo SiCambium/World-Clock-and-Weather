@@ -364,3 +364,13 @@ pub fn darken(c: Color, amount: f32) -> Color {
         a: c.a,
     }
 }
+
+/// Blends `a` towards `b` by `t` (0 = all `a`, 1 = all `b`).
+pub fn mix(a: Color, b: Color, t: f32) -> Color {
+    Color {
+        r: a.r + (b.r - a.r) * t,
+        g: a.g + (b.g - a.g) * t,
+        b: a.b + (b.b - a.b) * t,
+        a: a.a + (b.a - a.a) * t,
+    }
+}

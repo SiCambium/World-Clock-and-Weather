@@ -4351,7 +4351,7 @@ dependencies = [
 
 [[package]]
 name = "timeatlas"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -4361,6 +4361,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sys-locale",
  "tokio",
 ]
 

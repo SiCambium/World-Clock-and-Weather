@@ -234,6 +234,8 @@ pub struct MapCanvas<'a> {
     pub markers: Vec<Marker>,
     /// Dim the tiles slightly (bright tiles in dark mode).
     pub dim: bool,
+    /// Where the sun is overhead (longitude, latitude), to shade night.
+    pub sun: Option<(f64, f64)>,
 }
 
 /// The bottom layer: raster tiles only. Kept separate because images are
@@ -416,6 +418,10 @@ where
             );
         }
 
+        if let Some(sub) = self.sun {
+            draw_night(&mut frame, &view, sub, c.dark);
+        }
+
         // Pins first, then labels placed to avoid each other and the pins.
         let shown: Vec<(&Marker, Point)> = self
             .markers
@@ -477,6 +483,69 @@ where
     }
 }
 
+
+/// Inverse of `project`: latitude for a normalised Mercator y.
+#[cfg(test)]
+fn unproject_lat(y: f64) -> f64 {
+    (PI * (1.0 - 2.0 * y)).sinh().atan().to_degrees()
+}
+
+/// Shades the night side of the world in four steps (sunset, then civil,
+/// nautical and astronomical twilight), and marks where the sun is
+/// overhead. Drawn column by column, so it works at any zoom and with the
+/// world repeated across the view.
+fn draw_night(frame: &mut Frame, view: &View, sub: (f64, f64), dark: bool) {
+    const STEP: f32 = 3.0;
+    let w = view.world_px();
+    let width = view.size.width;
+    let night = Color::from_rgb(0.02, 0.04, 0.14);
+    let alpha = if dark { 0.17 } else { 0.13 };
+    let screen_y = |lat: f64| -> f32 {
+        let (_, y) = project(0.0, lat);
+        (view.size.height as f64 / 2.0 + (y - view.center.1) * w) as f32
+    };
+    for level in [crate::sun::HORIZON, -6.0, -12.0, -18.0] {
+        let shade = Path::new(|b| {
+            let mut x = 0.0f32;
+            while x < width {
+                let nx = view.center.0 + ((x + STEP / 2.0) as f64 - width as f64 / 2.0) / w;
+                let lon = nx.rem_euclid(1.0) * 360.0 - 180.0;
+                for (lo, hi) in crate::sun::below_on_meridian(sub, lon, level, 85.06) {
+                    let (top, bottom) = (screen_y(hi), screen_y(lo));
+                    let (top, bottom) = (top.max(-2.0), bottom.min(view.size.height + 2.0));
+                    if bottom > top {
+                        b.rectangle(Point::new(x, top), Size::new(STEP.min(width - x), bottom - top));
+                    }
+                }
+                x += STEP;
+            }
+        });
+        frame.fill(&shade, Color { a: alpha, ..night });
+    }
+
+    // The sun, where it is overhead.
+    let (sx, sy) = project(sub.0, sub.1);
+    let mut dx = sx - view.center.0;
+    dx -= dx.round();
+    let p = Point::new(
+        (width as f64 / 2.0 + dx * w) as f32,
+        (view.size.height as f64 / 2.0 + (sy - view.center.1) * w) as f32,
+    );
+    if p.x > -20.0 && p.x < width + 20.0 && p.y > -20.0 && p.y < view.size.height + 20.0 {
+        let sun = Color::from_rgb8(0xff, 0xc5, 0x3d);
+        frame.fill(&Path::circle(p, 12.0), Color { a: 0.25, ..sun });
+        for i in 0..8 {
+            let a = i as f32 * std::f32::consts::PI / 4.0;
+            let (s, co) = a.sin_cos();
+            frame.stroke(
+                &Path::line(Point::new(p.x + co * 8.5, p.y + s * 8.5), Point::new(p.x + co * 12.5, p.y + s * 12.5)),
+                Stroke::default().with_color(sun).with_width(1.6),
+            );
+        }
+        frame.fill(&Path::circle(p, 6.0), sun);
+        frame.stroke(&Path::circle(p, 6.0), Stroke::default().with_color(Color::WHITE).with_width(1.2));
+    }
+}
 
 /// Chooses where each label goes: beside, above or below its pin, or a
 /// little further away, picking the spot that overlaps other labels, pins
@@ -699,6 +768,14 @@ mod tests {
         for (lon, lat) in pts {
             let p = v.to_screen(project(lon, lat));
             assert!(p.x > 0.0 && p.x < 900.0 && p.y > 0.0 && p.y < 500.0, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn unproject_round_trip() {
+        for lat in [-80.0, -33.9, 0.0, 51.5, 85.0] {
+            let (_, y) = project(0.0, lat);
+            assert!((unproject_lat(y) - lat).abs() < 1e-6);
         }
     }
 
