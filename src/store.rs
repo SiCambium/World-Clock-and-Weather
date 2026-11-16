@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{GeocodeResult, MAX_PLACES, MIN_PLACES, Place, Weather};
+use crate::units::{HourFormat, TempUnit, WindUnit, region_defaults};
 
 #[derive(Serialize, Deserialize)]
 struct ConfigFile {
@@ -57,6 +58,7 @@ pub fn default_places() -> Vec<Place> {
             timezone: "Europe/London".into(),
             latitude: 51.5074,
             longitude: -0.1278,
+            label: None,
         },
         Place {
             id: "40.7128_-74.0060".into(),
@@ -66,6 +68,7 @@ pub fn default_places() -> Vec<Place> {
             timezone: "America/New_York".into(),
             latitude: 40.7128,
             longitude: -74.0060,
+            label: None,
         },
     ]
 }
@@ -125,12 +128,39 @@ pub fn add(places: &[Place], result: &GeocodeResult) -> Result<Vec<Place>, Strin
 /// Removes a place by id, enforcing the minimum. Returns the new list.
 pub fn remove(places: &[Place], id: &str) -> Result<Vec<Place>, String> {
     if places.len() <= MIN_PLACES {
-        return Err(format!("You must keep at least {MIN_PLACES} places."));
+        return Err(if MIN_PLACES == 1 {
+            "Keep at least one place.".to_string()
+        } else {
+            format!("You must keep at least {MIN_PLACES} places.")
+        });
     }
     let updated: Vec<Place> = places.iter().filter(|p| p.id != id).cloned().collect();
     if updated.len() == places.len() {
         return Err("Place not found.".into());
     }
+    save(&updated)?;
+    Ok(updated)
+}
+
+/// Gives a place its own name, or clears it when `label` is blank.
+pub fn rename(places: &[Place], id: &str, label: &str) -> Result<Vec<Place>, String> {
+    let mut updated = places.to_vec();
+    let place = updated.iter_mut().find(|p| p.id == id).ok_or("Place not found.")?;
+    let label = label.trim();
+    place.label = (!label.is_empty() && label != place.name).then(|| label.to_string());
+    save(&updated)?;
+    Ok(updated)
+}
+
+/// Moves a place one step earlier (`-1`) or later (`1`) in the saved order.
+pub fn move_place(places: &[Place], id: &str, step: i32) -> Result<Vec<Place>, String> {
+    let mut updated = places.to_vec();
+    let i = updated.iter().position(|p| p.id == id).ok_or("Place not found.")?;
+    let j = i as i64 + step as i64;
+    if j < 0 || j >= updated.len() as i64 {
+        return Ok(updated);
+    }
+    updated.swap(i, j as usize);
     save(&updated)?;
     Ok(updated)
 }
@@ -159,6 +189,53 @@ pub struct Prefs {
     pub show_weather: bool,
     #[serde(default)]
     pub clock_style: ClockStyle,
+    #[serde(default = "default_temp")]
+    pub temp_unit: TempUnit,
+    #[serde(default = "default_wind")]
+    pub wind_unit: WindUnit,
+    #[serde(default = "default_hours")]
+    pub hour_format: HourFormat,
+    #[serde(default)]
+    pub order: Order,
+    /// Show "+5 h" from the Mac's own time beside each GMT offset.
+    #[serde(default)]
+    pub show_relative: bool,
+    /// Shade night and twilight on the map.
+    #[serde(default = "yes")]
+    pub night_on_map: bool,
+}
+
+/// How the clock cards are ordered.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Order {
+    /// West to east by current UTC offset.
+    #[default]
+    TimeZone,
+    /// The user's own order, set in Settings.
+    Manual,
+}
+
+impl Order {
+    pub const ALL: [Order; 2] = [Order::TimeZone, Order::Manual];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Order::TimeZone => "By time zone",
+            Order::Manual => "My order",
+        }
+    }
+}
+
+fn default_temp() -> TempUnit {
+    region_defaults().temp
+}
+
+fn default_wind() -> WindUnit {
+    region_defaults().wind
+}
+
+fn default_hours() -> HourFormat {
+    region_defaults().hours
 }
 
 /// How each place's time is shown.
@@ -198,6 +275,12 @@ impl Default for Prefs {
             show_map: true,
             show_weather: true,
             clock_style: ClockStyle::Both,
+            temp_unit: default_temp(),
+            wind_unit: default_wind(),
+            hour_format: default_hours(),
+            order: Order::TimeZone,
+            show_relative: false,
+            night_on_map: true,
         }
     }
 }

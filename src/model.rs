@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const MIN_PLACES: usize = 2;
-pub const MAX_PLACES: usize = 10;
+pub const MIN_PLACES: usize = 1;
+pub const MAX_PLACES: usize = 12;
 
 /// A saved location the user is tracking.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -17,6 +17,9 @@ pub struct Place {
     pub timezone: String,
     pub latitude: f64,
     pub longitude: f64,
+    /// The user's own name for the place ("Mum" rather than "Sydney").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 impl Place {
@@ -29,11 +32,24 @@ impl Place {
             timezone: r.timezone.clone(),
             latitude: r.latitude,
             longitude: r.longitude,
+            label: None,
         }
     }
 
+    /// The name to show: the user's label if set, otherwise the city.
+    pub fn display_name(&self) -> &str {
+        self.label.as_deref().filter(|l| !l.trim().is_empty()).unwrap_or(&self.name)
+    }
+
+    /// The region line; when the place has its own label, the real city
+    /// name leads it so it is never lost.
     pub fn region(&self) -> String {
-        region_label(&self.admin1, &self.country)
+        let region = region_label(&self.admin1, &self.country);
+        if self.display_name() != self.name {
+            if region.is_empty() { self.name.clone() } else { format!("{}, {region}", self.name) }
+        } else {
+            region
+        }
     }
 }
 

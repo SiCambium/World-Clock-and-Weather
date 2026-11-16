@@ -368,6 +368,12 @@ pub enum Glyph {
     Fit,
     Search,
     Globe,
+    Moon,
+    Sunrise,
+    Sunset,
+    Up,
+    Down,
+    Edit,
 }
 
 struct GlyphProgram {
@@ -378,6 +384,11 @@ struct GlyphProgram {
 /// A small line icon that inherits the accent or text colour.
 pub fn glyph<'a, M: 'a>(glyph: Glyph, size: f32) -> Element<'a, M> {
     sized(GlyphProgram { glyph, color: None }, size)
+}
+
+/// A small line icon in a given colour.
+pub fn glyph_colored<'a, M: 'a>(glyph: Glyph, size: f32, color: Color) -> Element<'a, M> {
+    sized(GlyphProgram { glyph, color: Some(color) }, size)
 }
 
 impl<M> canvas::Program<M> for GlyphProgram {
@@ -460,6 +471,104 @@ impl<M> canvas::Program<M> for GlyphProgram {
             Glyph::Search => {
                 frame.stroke(&Path::circle(u.p(0.43, 0.43), u.l(0.24)), st);
                 frame.stroke(&Path::line(u.p(0.61, 0.61), u.p(0.84, 0.84)), st);
+            }
+            Glyph::Moon => {
+                // A crescent: the part of disc A outside disc B, traced as
+                // one outline (separate arcs would each start a new shape).
+                let (ca, ra) = ((0.5f32, 0.5f32), 0.38f32);
+                let (cb, rb) = ((0.7f32, 0.36f32), 0.32f32);
+                let (dx, dy) = (cb.0 - ca.0, cb.1 - ca.1);
+                let d = (dx * dx + dy * dy).sqrt();
+                let a = (ra * ra - rb * rb + d * d) / (2.0 * d);
+                let h = (ra * ra - a * a).max(0.0).sqrt();
+                let (px, py) = (ca.0 + a * dx / d, ca.1 + a * dy / d);
+                let i1 = (px - h * dy / d, py + h * dx / d);
+                let i2 = (px + h * dy / d, py - h * dx / d);
+                let ang = |c: (f32, f32), p: (f32, f32)| (p.1 - c.1).atan2(p.0 - c.0);
+                // Of the two ways round a circle between the crossing
+                // points, pick the one whose middle passes `keep`.
+                let sweep = |c: (f32, f32), r: f32, from: f32, to: f32, keep: &dyn Fn(f32, f32) -> bool| {
+                    let mut s = (to - from).rem_euclid(TAU);
+                    let mid = from + s / 2.0;
+                    if !keep(c.0 + r * mid.cos(), c.1 + r * mid.sin()) {
+                        s -= TAU;
+                    }
+                    s
+                };
+                let dist = |p: (f32, f32), x: f32, y: f32| ((x - p.0).powi(2) + (y - p.1).powi(2)).sqrt();
+                // Outer edge: round A from i1 to i2, outside B.
+                let outer_from = ang(ca, i1);
+                let outer_sweep = sweep(ca, ra, outer_from, ang(ca, i2), &|x, y| dist(cb, x, y) > rb);
+                // Inner edge: back round B from i2 to i1, inside A.
+                let inner_from = ang(cb, i2);
+                let inner_sweep = sweep(cb, rb, inner_from, ang(cb, i1), &|x, y| dist(ca, x, y) < ra);
+                let crescent = Path::new(|b| {
+                    let steps = 24;
+                    b.move_to(u.p(i1.0, i1.1));
+                    for k in 1..=steps {
+                        let t = outer_from + outer_sweep * k as f32 / steps as f32;
+                        b.line_to(u.p(ca.0 + ra * t.cos(), ca.1 + ra * t.sin()));
+                    }
+                    for k in 1..=steps {
+                        let t = inner_from + inner_sweep * k as f32 / steps as f32;
+                        b.line_to(u.p(cb.0 + rb * t.cos(), cb.1 + rb * t.sin()));
+                    }
+                    b.close();
+                });
+                frame.fill(&crescent, color);
+            }
+            Glyph::Sunrise | Glyph::Sunset => {
+                let sun = c.sun;
+                let thin = stroke(sun, u.l(0.08).max(1.2));
+                // Half sun on the horizon with three rays.
+                let half = Path::new(|b| {
+                    b.arc(Arc {
+                        center: u.p(0.5, 0.68),
+                        radius: u.l(0.2),
+                        start_angle: PI.into(),
+                        end_angle: TAU.into(),
+                    });
+                    b.close();
+                });
+                frame.fill(&half, sun);
+                for a in [PI * 1.15, PI * 1.5, PI * 1.85] {
+                    let (s, co) = a.sin_cos();
+                    frame.stroke(
+                        &Path::line(u.p(0.5 + co * 0.29, 0.68 + s * 0.29), u.p(0.5 + co * 0.4, 0.68 + s * 0.4)),
+                        thin,
+                    );
+                }
+                frame.stroke(&Path::line(u.p(0.1, 0.7), u.p(0.9, 0.7)), stroke(color, u.l(0.07).max(1.1)));
+                // Arrow: up for sunrise, down for sunset.
+                let up = self.glyph == Glyph::Sunrise;
+                let (tip, base) = if up { (0.82, 0.96) } else { (0.96, 0.82) };
+                let arrow = Path::new(|b| {
+                    b.move_to(u.p(0.5, tip));
+                    b.line_to(u.p(0.38, base));
+                    b.line_to(u.p(0.62, base));
+                    b.close();
+                });
+                frame.fill(&arrow, color);
+            }
+            Glyph::Up | Glyph::Down => {
+                let (a, b2) = if self.glyph == Glyph::Up { (0.32, 0.66) } else { (0.68, 0.34) };
+                let chevron = Path::new(|b| {
+                    b.move_to(u.p(0.25, b2));
+                    b.line_to(u.p(0.5, a));
+                    b.line_to(u.p(0.75, b2));
+                });
+                frame.stroke(&chevron, st);
+            }
+            Glyph::Edit => {
+                // A pencil at 45 degrees.
+                frame.stroke(&Path::line(u.p(0.28, 0.72), u.p(0.72, 0.28)), stroke(color, u.l(0.16).max(2.0)));
+                let tip = Path::new(|b| {
+                    b.move_to(u.p(0.18, 0.82));
+                    b.line_to(u.p(0.22, 0.66));
+                    b.line_to(u.p(0.34, 0.78));
+                    b.close();
+                });
+                frame.fill(&tip, color);
             }
             Glyph::Globe => {
                 let thin = stroke(color, u.l(0.06).max(1.2));

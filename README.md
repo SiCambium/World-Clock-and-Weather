@@ -3,18 +3,36 @@
 World clocks, weather and a map in one native macOS window, written in Rust
 with [iced](https://iced.rs). No web view, no account, no API keys.
 
-- **Clocks:** digital and analogue time for 2 to 10 places, sorted west to east,
-  with each place's GMT offset.
+- **Clocks:** digital, analogue or both for 1 to 12 places, sorted west to
+  east or in your own order, with each place's GMT offset and today's sunrise
+  and sunset. Rename a place ("Mum" rather than "Sydney") in Settings. Cards
+  take a night tint, with a moon, when it is dark there. Optionally show the
+  difference from your Mac's own time ("+5 h from you").
 - **Weather:** current conditions, today's high and low, and a forecast for the
-  next 24 hours and 7 days (click a card). The last good data is kept, so the
-  app opens with weather even when offline.
-- **Map:** a native, draggable and zoomable map with live time labels, tile
-  caching, automatic retries, a reload button and a "show all places" button.
-  Choose the map style in Settings.
+  next 24 hours and 7 days (click a card), with daylight length and how it is
+  changing. °C or °F, km/h, mph, m/s or knots, and 12 or 24-hour time, with
+  defaults from your Mac's region. The last good data is kept, so the app opens
+  with weather even when offline.
+- **Map:** a native, draggable and zoomable map with live time labels, night
+  and twilight shading, the point where the sun is overhead, tile caching,
+  automatic retries, a reload button and a "show all places" button. Choose
+  the map style in Settings.
 - **Switches:** turn the map and weather on or off from the top bar; set what
   shows at launch in Settings.
-- **Resizable:** text and layout scale with the window, and narrow windows
-  switch to a stacked layout. Light and dark mode follow macOS.
+- **Fills the window:** the cards stretch to fill whatever space there is and
+  their clocks grow with them, so there are no empty gaps at any window size,
+  with or without the map. Light and dark mode follow macOS.
+
+### Keyboard shortcuts
+
+| Keys | Action |
+|---|---|
+| ⌘R | Refresh weather and map |
+| ⌘, or ⌘N or ⌘F | Settings (to add a place) |
+| ⌘1, ⌘2, ⌘3 | Digital, analogue or both |
+| ⇧⌘M, ⇧⌘W | Show or hide the map or weather |
+| Arrow keys, Return | Pick a place and open its forecast |
+| Esc | Close a panel |
 
 ## Running it
 
@@ -55,8 +73,8 @@ use your own.
 - Built with the **hardened runtime**, a full icon set (`macos/AppIcon.icns`,
   regenerate with `python3 tools/make_icon.py`), minimum macOS 12, and the
   export-compliance flag set (standard HTTPS only).
-- Data sources are credited in the app: Open-Meteo for weather and the chosen
-  map provider's attribution on the map.
+- Data sources are credited in the app (Settings, About TimeAtlas): Open-Meteo
+  for weather and the chosen map provider's attribution on the map.
 
 Before a public release, check the map provider's terms: the OpenStreetMap
 and OpenTopoMap tile servers are run by volunteers and discourage heavy use
@@ -71,6 +89,8 @@ Providers are defined in `src/tiles.rs`.
 | `src/api.rs` | Open-Meteo city search and weather |
 | `src/map.rs`, `src/tiles.rs` | Map drawing, tile download queue and cache |
 | `src/graphics.rs` | Weather icons, clocks and UI glyphs (vector) |
+| `src/sun.rs` | Sun position, sunrise and sunset, night shading (no network) |
+| `src/units.rs` | Temperature, wind and 12/24-hour formats |
 | `src/style.rs` | Colours, fonts and widget styles |
 | `src/store.rs` | Saved places, preferences and weather cache |
 | `macos/` | Info.plist, entitlements, privacy manifest, icon, build script |
